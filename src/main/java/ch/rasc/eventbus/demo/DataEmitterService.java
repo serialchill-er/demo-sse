@@ -24,18 +24,18 @@ public class DataEmitterService {
 
 	@Scheduled(initialDelay = 2000, fixedRate = 5_000)
 	public void sendData() {
-		StringBuilder sb = new StringBuilder("[");
+/*		StringBuilder sb = new StringBuilder("[");
 		for (int i = 0; i < 5; i++) {
 			sb.append(random.nextInt(31));
 			sb.append(",");
 		}
 		sb.replace(sb.length() - 1, sb.length(), "]");
-		this.eventPublisher.publishEvent(SseEvent.ofData(sb.toString()));
-		
-		Dto dto = new Dto();
-		dto.setI(10);
-		dto.setS("test");
-		this.eventPublisher.publishEvent(SseEvent.of("dto", dto));
+		this.eventPublisher.publishEvent(SseEvent.ofData(sb.toString()));*/
+
+		int i = random.nextInt(5);
+		Person person = new Person(i, "test");
+		System.out.println(person);
+		this.eventPublisher.publishEvent(SseEvent.of(""+person.getId(), person));
 	}
 
 }

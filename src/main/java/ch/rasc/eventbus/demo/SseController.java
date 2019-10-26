@@ -19,10 +19,10 @@ public class SseController {
 		this.eventBus = eventBus;
 	}
 
-	@GetMapping("/register/{id}")
+	@GetMapping("/stream/{id}")
 	public SseEmitter register(@PathVariable("id") String id, HttpServletResponse response) {
 		response.setHeader("Cache-Control", "no-store");
-		return this.eventBus.createSseEmitter(id, 30_000L, SseEvent.DEFAULT_EVENT, "dto");
+		return this.eventBus.createSseEmitter(id, 30_000L, SseEvent.DEFAULT_EVENT, id);
 	}
 
 }
