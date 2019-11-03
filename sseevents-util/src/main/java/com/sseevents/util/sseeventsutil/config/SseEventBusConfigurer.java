@@ -37,7 +37,8 @@ public interface SseEventBusConfigurer {
      * Default: 1 day
      */
     default Duration clientExpiration() {
-        return Duration.ofDays(1);
+//        return Duration.ofDays(1);
+        return Duration.ofMinutes(1);
     }
 
     /**
@@ -52,7 +53,7 @@ public interface SseEventBusConfigurer {
      * An executor that schedules and runs the internal jobs
      * <p>
      * By default this is an instance created with
-     * {@link Executors#newScheduledThreadPool(2)}
+     *
      */
     default ScheduledExecutorService taskScheduler() {
         return Executors.newScheduledThreadPool(2);

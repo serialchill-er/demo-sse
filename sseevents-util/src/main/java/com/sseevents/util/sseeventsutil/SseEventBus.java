@@ -22,6 +22,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import javax.annotation.PreDestroy;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -104,14 +105,14 @@ public class SseEventBus {
     public SseEmitter createSseEmitter(String clientId, Long timeout, boolean unsubscribe,
                                        boolean completeAfterMessage, String... events) {
         SseEmitter emitter = new SseEmitter(timeout);
-        registerClient(clientId, emitter, completeAfterMessage);
+        Client registeredClient = registerClient(clientId, emitter, completeAfterMessage);
 
         if (events != null && events.length > 0) {
             if (unsubscribe) {
-                unsubscribeFromAllEvents(clientId, events);
+                unsubscribeFromAllEvents(registeredClient, events);
             }
             for (String event : events) {
-                subscribe(clientId, event);
+                subscribe(registeredClient, event);
             }
         }
 
@@ -122,7 +123,7 @@ public class SseEventBus {
         this.registerClient(clientId, emitter, false);
     }
 
-    public void registerClient(String clientId, SseEmitter emitter,
+    public Client registerClient(String clientId, SseEmitter emitter,
                                boolean completeAfterMessage) {
         Set<Client> clientSet = this.clients.get(clientId);
         Client newClient = new Client(clientId, emitter, completeAfterMessage);
@@ -131,25 +132,28 @@ public class SseEventBus {
             newClientSet.add(newClient);
             this.clients.put(clientId, newClientSet);
         } else {
-            if (!clientSet.contains(newClient)) {
+            if (!clientSet.contains(newClient)) {  //TODO Can remove if statement
                 clientSet.add(newClient);
             }
         }
+        return newClient;
     }
 
 
     public void unregisterClient(Client client) {
-        unsubscribeFromAllEvents(client.getId());
+        unsubscribeFromAllEvents(client);
         this.clients.get(client.getId()).remove(client);
+        System.out.println("Unregistering: "+client);
+        System.out.println("client->emitter: "+this.clients.toString());
 //        System.out.println("Unregister: "+client.getId());
     }
 
-    public void subscribe(String clientId, String event) {
-        this.subscriptionRegistry.subscribe(clientId, event);
+    public void subscribe(Client client, String event) {
+        this.subscriptionRegistry.subscribe(client, event);
     }
 
-    public void unsubscribe(String clientId, String event) {
-        this.subscriptionRegistry.unsubscribe(clientId, event);
+    public void unsubscribe(Client client, String event) {
+        this.subscriptionRegistry.unsubscribe(client, event);
     }
 
     /**
@@ -157,7 +161,7 @@ public class SseEventBus {
      * keepEvents parameter. When keepEvents is null the client unsubscribes from all
      * events
      */
-    public void unsubscribeFromAllEvents(String clientId, String... keepEvents) {
+    public void unsubscribeFromAllEvents(Client client, String... keepEvents) {
         Set<String> keepEventsSet = null;
         if (keepEvents != null && keepEvents.length > 0) {
             keepEventsSet = new HashSet<>();
@@ -171,43 +175,46 @@ public class SseEventBus {
             events = new HashSet<>(events);
             events.removeAll(keepEventsSet);
         }
-        events.forEach(event -> unsubscribe(clientId, event));
+        events.forEach(event -> unsubscribe(client, event));
     }
 
     @EventListener
     public void handleEvent(SseEvent event) {
-        try {
-
             String convertedValue = null;
             if (!(event.data() instanceof String)) {
                 convertedValue = this.convertObject(event);
             }
+            String finalConvertedValue = convertedValue;
 
             if (event.clientIds().isEmpty()) {
-                List<Client> clientList = this.clients.values().stream().flatMap(x -> x.stream()).collect(Collectors.toList());
-                for (Client client : clientList) {
-                    if (!event.excludeClientIds().contains(client.getId())
-                            && this.subscriptionRegistry.isClientSubscribedToEvent(
-                            client.getId(), event.event())) {
+                List<Client> clientList = this.clients.values().stream().flatMap(Collection::stream).collect(Collectors.toList());
+
+                clientList.stream().filter(client -> (!event.excludeClientIds().contains(client.getId())
+                        && this.subscriptionRegistry.isClientSubscribedToEvent(
+                        client, event.event()))).forEach(client -> {
+                    try {
                         this.sendQueue
-                                .put(new ClientEvent(client, event, convertedValue));
+                                .put(new ClientEvent(client, event, finalConvertedValue));
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
                     }
-                }
+                });
             } else {
                 for (String clientId : event.clientIds()) {
                     if (this.subscriptionRegistry.isClientSubscribedToEvent(clientId,
                             event.event())) {
-                        List<Client> clientList = this.clients.get(clientId).stream().collect(Collectors.toList());
-                        for (Client client : clientList) {
-                            this.sendQueue.put(new ClientEvent(client,
-                                    event, convertedValue));
-                        }
+
+                        this.clients.get(clientId).forEach(client -> {
+                            try {
+                                this.sendQueue.put(new ClientEvent(client,
+                                        event, finalConvertedValue));
+                            } catch (InterruptedException e) {
+                                throw new RuntimeException(e);
+                            }
+                        });
                     }
                 }
             }
-        } catch (InterruptedException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     private void reScheduleFailedEvents() {
@@ -216,7 +223,7 @@ public class SseEventBus {
 
         for (ClientEvent sseClientEvent : failedEvents) {
             if (this.subscriptionRegistry.isClientSubscribedToEvent(
-                    sseClientEvent.getClient().getId(),
+                    sseClientEvent.getClient(),
                     sseClientEvent.getSseEvent().event())) {
                 try {
                     this.sendQueue.put(sseClientEvent);
@@ -254,6 +261,7 @@ public class SseEventBus {
         try {
             client.sseEmitter().send(clientEvent.createSseEventBuilder());
             if (client.isCompleteAfterMessage()) {
+                client.setExpired(true);
                 client.sseEmitter().complete();
             }
             return true;
@@ -276,14 +284,13 @@ public class SseEventBus {
 
     private void cleanUpClients() {
         if (!this.clients.isEmpty()) {
-            long expirationTime = System.currentTimeMillis()
-                    - this.clientExpiration.toMillis();
             Iterator<Entry<String, Set<Client>>> it = this.clients.entrySet().iterator();
             Set<Client> staleClients = new HashSet<>();
             while (it.hasNext()) {
                 Entry<String, Set<Client>> entry = it.next();
-                entry.getValue().stream().filter(client -> (client.lastTransfer() < expirationTime) || client.isExpired()).forEach(staleClients::add);
+                entry.getValue().stream().filter(client -> client.isExpired() ).forEach(staleClients::add);
             }
+            System.out.println("Stale Clients:"+staleClients);
             staleClients.forEach(this::unregisterClient);
         }
     }

@@ -15,6 +15,10 @@ public class Client {
 
     private final boolean completeAfterMessage;
 
+    public void setExpired(boolean expired) {
+        isExpired = expired;
+    }
+
     public boolean isExpired() {
         return isExpired;
     }
@@ -23,7 +27,8 @@ public class Client {
         this.id = id;
         this.isExpired=false;
         this.sseEmitter = sseEmitter;
-        this.sseEmitter.onTimeout(() -> {this.isExpired=true;this.sseEmitter.complete();});
+        this.sseEmitter.onTimeout(() -> {this.isExpired=true;this.sseEmitter.complete();
+            System.out.println("Timeout: "+this);});
         this.lastTransfer = System.currentTimeMillis();
         this.completeAfterMessage = completeAfterMessage;
     }
@@ -53,14 +58,23 @@ public class Client {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         Client client = (Client) o;
-        return lastTransfer == client.lastTransfer &&
-                completeAfterMessage == client.completeAfterMessage &&
-                Objects.equals(id, client.id) &&
+        return Objects.equals(id, client.id) &&
                 Objects.equals(sseEmitter, client.sseEmitter);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, sseEmitter, lastTransfer, completeAfterMessage);
+        return Objects.hash(id, sseEmitter);
+    }
+
+    @Override
+    public String toString() {
+        return "Client{" +
+                "id='" + id + '\'' +
+                ", isExpired=" + isExpired +
+                ", sseEmitter=" + sseEmitter +
+                ", lastTransfer=" + lastTransfer +
+                ", completeAfterMessage=" + completeAfterMessage +
+                '}';
     }
 }
