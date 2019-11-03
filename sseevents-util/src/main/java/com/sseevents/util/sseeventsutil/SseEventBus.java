@@ -20,7 +20,6 @@ import org.springframework.context.event.EventListener;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import javax.annotation.PreDestroy;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -37,9 +36,6 @@ import java.util.stream.Collectors;
 
 public class SseEventBus {
 
-    /**
-     * Client Id -> SseEmitter
-     */
     private final ConcurrentMap<String, Set<Client>> clients;
 
     private final SubscriptionRegistry subscriptionRegistry;
@@ -48,9 +44,7 @@ public class SseEventBus {
 
     private final int noOfSendResponseTries;
 
-    private final Duration clientExpiration;
-
-    private List<DataObjectConverter> dataObjectConverters;
+    private DataObjectConverter dataObjectConverter;
 
     private final BlockingQueue<ClientEvent> errorQueue;
 
@@ -63,7 +57,6 @@ public class SseEventBus {
 
         this.taskScheduler = configurer.taskScheduler();
         this.noOfSendResponseTries = configurer.noOfSendResponseTries();
-        this.clientExpiration = configurer.clientExpiration();
 
         this.clients = new ConcurrentHashMap<>();
 
@@ -91,17 +84,6 @@ public class SseEventBus {
         return createSseEmitter(clientId, timeout, unsubscribe, false, events);
     }
 
-    /**
-     * Creates a {@link SseEmitter} and registers the client in the internal database.
-     * Client will be subscribed to the provided events if specified.
-     *
-     * @param clientId    unique client identifier
-     * @param timeout     timeout value in milliseconds
-     * @param unsubscribe if true unsubscribes from all events that are not provided with
-     *                    the next parameter
-     * @param events      events the client wants to subscribe
-     * @return a new SseEmitter instance
-     */
     public SseEmitter createSseEmitter(String clientId, Long timeout, boolean unsubscribe,
                                        boolean completeAfterMessage, String... events) {
         SseEmitter emitter = new SseEmitter(timeout);
@@ -156,11 +138,6 @@ public class SseEventBus {
         this.subscriptionRegistry.unsubscribe(client, event);
     }
 
-    /**
-     * Unsubscribe the client from all events except the events provided with the
-     * keepEvents parameter. When keepEvents is null the client unsubscribes from all
-     * events
-     */
     public void unsubscribeFromAllEvents(Client client, String... keepEvents) {
         Set<String> keepEventsSet = null;
         if (keepEvents != null && keepEvents.length > 0) {
@@ -272,12 +249,10 @@ public class SseEventBus {
     }
 
     private String convertObject(SseEvent event) {
-        if (this.dataObjectConverters != null) {
-            for (DataObjectConverter converter : this.dataObjectConverters) {
-                if (converter.supports(event)) {
-                    return converter.convert(event);
+        if (this.dataObjectConverter != null) {
+                if (this.dataObjectConverter.supports(event)) {
+                    return this.dataObjectConverter.convert(event);
                 }
-            }
         }
         return null;
     }
@@ -295,13 +270,8 @@ public class SseEventBus {
         }
     }
 
-
-    public List<DataObjectConverter> getDataObjectConverters() {
-        return this.dataObjectConverters;
-    }
-
-    public void setDataObjectConverters(List<DataObjectConverter> dataObjectConverters) {
-        this.dataObjectConverters = dataObjectConverters;
+    public void setDataObjectConverters(DataObjectConverter dataObjectConverter) {
+        this.dataObjectConverter = dataObjectConverter;
     }
 
 }

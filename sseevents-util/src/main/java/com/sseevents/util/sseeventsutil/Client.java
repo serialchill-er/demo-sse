@@ -37,10 +37,6 @@ public class Client {
         return this.id;
     }
 
-    long lastTransfer() {
-        return this.lastTransfer;
-    }
-
     void updateLastTransfer() {
         this.lastTransfer = System.currentTimeMillis();
     }
