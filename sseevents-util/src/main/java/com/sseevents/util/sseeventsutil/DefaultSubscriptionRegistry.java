@@ -27,7 +27,7 @@ public class DefaultSubscriptionRegistry implements SubscriptionRegistry {
         this.eventSubscribers.computeIfPresent(event,
                 (k, set) -> set.remove(client) && set.isEmpty() ? null : set);
 
-        System.out.println("Subscription Registry: "+this.eventSubscribers.toString());
+        System.out.println("Subscription Registry for event "+event+" : "+client+" : "+this.eventSubscribers.toString());
     }
 
     @Override

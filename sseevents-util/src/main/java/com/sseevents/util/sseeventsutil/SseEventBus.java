@@ -152,6 +152,7 @@ public class SseEventBus {
             events = new HashSet<>(events);
             events.removeAll(keepEventsSet);
         }
+        System.out.println("Events: "+events.size() +" : "+events);
         events.forEach(event -> unsubscribe(client, event));
     }
 
@@ -225,7 +226,10 @@ public class SseEventBus {
                         this.errorQueue.put(clientEvent);
                     }
                 } else {
-                    this.unregisterClient(clientEvent.getClient());
+                    System.out.println("From Event Loop : "+clientEvent.getErrorCounter()+ " : "+Thread.currentThread().getName());
+                    clientEvent.getClient().setExpired(true);
+                    clientEvent.getClient().sseEmitter().complete();
+//                    this.unregisterClient(clientEvent.getClient());
                 }
             }
         } catch (InterruptedException e) {
@@ -263,8 +267,9 @@ public class SseEventBus {
             Set<Client> staleClients = new HashSet<>();
             while (it.hasNext()) {
                 Entry<String, Set<Client>> entry = it.next();
-                entry.getValue().stream().filter(client -> client.isExpired() ).forEach(staleClients::add);
+                entry.getValue().stream().filter(Client::isExpired).forEach(staleClients::add);
             }
+            System.out.println("From cleanUpClients");
             System.out.println("Stale Clients:"+staleClients);
             staleClients.forEach(this::unregisterClient);
         }
