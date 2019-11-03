@@ -22,11 +22,9 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import javax.annotation.PreDestroy;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
@@ -34,13 +32,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public class SseEventBus {
 
     /**
      * Client Id -> SseEmitter
      */
-    private final ConcurrentMap<String, Client> clients;
+    private final ConcurrentMap<String, Set<Client>> clients;
 
     private final SubscriptionRegistry subscriptionRegistry;
 
@@ -57,7 +56,7 @@ public class SseEventBus {
     private final BlockingQueue<ClientEvent> sendQueue;
 
     public SseEventBus(SseEventBusConfigurer configurer,
-					   SubscriptionRegistry subscriptionRegistry) {
+                       SubscriptionRegistry subscriptionRegistry) {
 
         this.subscriptionRegistry = subscriptionRegistry;
 
@@ -82,21 +81,8 @@ public class SseEventBus {
         this.taskScheduler.shutdownNow();
     }
 
-    public SseEmitter createSseEmitter(String clientId) {
-        return createSseEmitter(clientId, 180_000L);
-    }
-
     public SseEmitter createSseEmitter(String clientId, String... events) {
         return createSseEmitter(clientId, 180_000L, false, false, events);
-    }
-
-    public SseEmitter createSseEmitter(String clientId, boolean unsubscribe,
-                                       String... events) {
-        return createSseEmitter(clientId, 180_000L, unsubscribe, false, events);
-    }
-
-    public SseEmitter createSseEmitter(String clientId, Long timeout, String... events) {
-        return createSseEmitter(clientId, timeout, false, false, events);
     }
 
     public SseEmitter createSseEmitter(String clientId, Long timeout, boolean unsubscribe,
@@ -107,17 +93,17 @@ public class SseEventBus {
     /**
      * Creates a {@link SseEmitter} and registers the client in the internal database.
      * Client will be subscribed to the provided events if specified.
-     * @param clientId unique client identifier
-     * @param timeout timeout value in milliseconds
+     *
+     * @param clientId    unique client identifier
+     * @param timeout     timeout value in milliseconds
      * @param unsubscribe if true unsubscribes from all events that are not provided with
-     * the next parameter
-     * @param events events the client wants to subscribe
+     *                    the next parameter
+     * @param events      events the client wants to subscribe
      * @return a new SseEmitter instance
      */
     public SseEmitter createSseEmitter(String clientId, Long timeout, boolean unsubscribe,
                                        boolean completeAfterMessage, String... events) {
         SseEmitter emitter = new SseEmitter(timeout);
-        emitter.onTimeout(emitter::complete);
         registerClient(clientId, emitter, completeAfterMessage);
 
         if (events != null && events.length > 0) {
@@ -138,37 +124,28 @@ public class SseEventBus {
 
     public void registerClient(String clientId, SseEmitter emitter,
                                boolean completeAfterMessage) {
-        Client client = this.clients.get(clientId);
-        if (client == null) {
-            this.clients.put(clientId,
-                    new Client(clientId, emitter, completeAfterMessage));
+        Set<Client> clientSet = this.clients.get(clientId);
+        Client newClient = new Client(clientId, emitter, completeAfterMessage);
+        if (clientSet == null) {
+            HashSet<Client> newClientSet = new HashSet<>();
+            newClientSet.add(newClient);
+            this.clients.put(clientId, newClientSet);
         } else {
-            client.updateEmitter(emitter);
+            if (!clientSet.contains(newClient)) {
+                clientSet.add(newClient);
+            }
         }
     }
 
-    public void unregisterClient(String clientId) {
-        unsubscribeFromAllEvents(clientId);
-        this.clients.remove(clientId);
-    }
 
-    /**
-     * Subscribe to the default event (message)
-     */
-    public void subscribe(String clientId) {
-        subscribe(clientId, SseEvent.DEFAULT_EVENT);
+    public void unregisterClient(Client client) {
+        unsubscribeFromAllEvents(client.getId());
+        this.clients.get(client.getId()).remove(client);
+//        System.out.println("Unregister: "+client.getId());
     }
 
     public void subscribe(String clientId, String event) {
         this.subscriptionRegistry.subscribe(clientId, event);
-    }
-
-    /**
-     * Subscribe to the event and unsubscribe to all other currently subscribed events
-     */
-    public void subscribeOnly(String clientId, String event) {
-        this.subscriptionRegistry.subscribe(clientId, event);
-        this.unsubscribeFromAllEvents(clientId, event);
     }
 
     public void unsubscribe(String clientId, String event) {
@@ -207,7 +184,8 @@ public class SseEventBus {
             }
 
             if (event.clientIds().isEmpty()) {
-                for (Client client : this.clients.values()) {
+                List<Client> clientList = this.clients.values().stream().flatMap(x -> x.stream()).collect(Collectors.toList());
+                for (Client client : clientList) {
                     if (!event.excludeClientIds().contains(client.getId())
                             && this.subscriptionRegistry.isClientSubscribedToEvent(
                             client.getId(), event.event())) {
@@ -219,8 +197,11 @@ public class SseEventBus {
                 for (String clientId : event.clientIds()) {
                     if (this.subscriptionRegistry.isClientSubscribedToEvent(clientId,
                             event.event())) {
-                        this.sendQueue.put(new ClientEvent(this.clients.get(clientId),
-                                event, convertedValue));
+                        List<Client> clientList = this.clients.get(clientId).stream().collect(Collectors.toList());
+                        for (Client client : clientList) {
+                            this.sendQueue.put(new ClientEvent(client,
+                                    event, convertedValue));
+                        }
                     }
                 }
             }
@@ -260,7 +241,7 @@ public class SseEventBus {
                         this.errorQueue.put(clientEvent);
                     }
                 } else {
-                    this.unregisterClient(clientEvent.getClient().getId());
+                    this.unregisterClient(clientEvent.getClient());
                 }
             }
         } catch (InterruptedException e) {
@@ -297,17 +278,16 @@ public class SseEventBus {
         if (!this.clients.isEmpty()) {
             long expirationTime = System.currentTimeMillis()
                     - this.clientExpiration.toMillis();
-            Iterator<Entry<String, Client>> it = this.clients.entrySet().iterator();
-            Set<String> staleClients = new HashSet<>();
+            Iterator<Entry<String, Set<Client>>> it = this.clients.entrySet().iterator();
+            Set<Client> staleClients = new HashSet<>();
             while (it.hasNext()) {
-                Entry<String, Client> entry = it.next();
-                if (entry.getValue().lastTransfer() < expirationTime) {
-                    staleClients.add(entry.getKey());
-                }
+                Entry<String, Set<Client>> entry = it.next();
+                entry.getValue().stream().filter(client -> (client.lastTransfer() < expirationTime) || client.isExpired()).forEach(staleClients::add);
             }
             staleClients.forEach(this::unregisterClient);
         }
     }
+
 
     public List<DataObjectConverter> getDataObjectConverters() {
         return this.dataObjectConverters;
@@ -315,56 +295,6 @@ public class SseEventBus {
 
     public void setDataObjectConverters(List<DataObjectConverter> dataObjectConverters) {
         this.dataObjectConverters = dataObjectConverters;
-    }
-
-    /**
-     * Get a collection of all registered clientIds
-     * @return an unmodifiable set of all registered clientIds
-     */
-    public Set<String> getAllClientIds() {
-        return Collections.unmodifiableSet(this.clients.keySet());
-    }
-
-    /**
-     * Get a collection of all registered events
-     * @return an unmodifiable set of all events
-     */
-    public Set<String> getAllEvents() {
-        return this.subscriptionRegistry.getAllEvents();
-    }
-
-    /**
-     * Get a map that maps events to a collection of clientIds
-     * @return map with the event as key, the value is a set of clientIds
-     */
-    public Map<String, Set<String>> getAllSubscriptions() {
-        return this.subscriptionRegistry.getAllSubscriptions();
-    }
-
-    /**
-     * Get all subscribers to a particular event
-     * @return an unmodifiable set of all subscribed clientIds to this event. Empty when
-     * nobody is subscribed
-     */
-    public Set<String> getSubscribers(String event) {
-        return this.subscriptionRegistry.getSubscribers(event);
-    }
-
-    /**
-     * Get the number of subscribers to a particular event
-     * @return the number of clientIds subscribed to this event. 0 when nobody is
-     * subscribed
-     */
-    public int countSubscribers(String event) {
-        return this.subscriptionRegistry.countSubscribers(event);
-    }
-
-    /**
-     * Check if a particular event has subscribers
-     * @return true when the event has 1 or more subscribers.
-     */
-    public boolean hasSubscribers(String event) {
-        return countSubscribers(event) != 0;
     }
 
 }

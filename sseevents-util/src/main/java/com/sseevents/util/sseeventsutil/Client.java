@@ -2,8 +2,12 @@ package com.sseevents.util.sseeventsutil;
 
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.Objects;
+
 public class Client {
     private final String id;
+
+    private boolean isExpired;
 
     private SseEmitter sseEmitter;
 
@@ -11,9 +15,15 @@ public class Client {
 
     private final boolean completeAfterMessage;
 
+    public boolean isExpired() {
+        return isExpired;
+    }
+
     Client(String id, SseEmitter sseEmitter, boolean completeAfterMessage) {
         this.id = id;
+        this.isExpired=false;
         this.sseEmitter = sseEmitter;
+        this.sseEmitter.onTimeout(() -> {this.isExpired=true;this.sseEmitter.complete();});
         this.lastTransfer = System.currentTimeMillis();
         this.completeAfterMessage = completeAfterMessage;
     }
@@ -34,12 +44,23 @@ public class Client {
         return this.sseEmitter;
     }
 
-    void updateEmitter(SseEmitter emitter) {
-        this.sseEmitter = emitter;
-    }
-
     boolean isCompleteAfterMessage() {
         return this.completeAfterMessage;
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Client client = (Client) o;
+        return lastTransfer == client.lastTransfer &&
+                completeAfterMessage == client.completeAfterMessage &&
+                Objects.equals(id, client.id) &&
+                Objects.equals(sseEmitter, client.sseEmitter);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, sseEmitter, lastTransfer, completeAfterMessage);
+    }
 }
