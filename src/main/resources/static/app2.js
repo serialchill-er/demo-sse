@@ -5,30 +5,56 @@ function loadComments () {
     this.start = function () {
 
 
-        var id=getRandomInt(5).toString();
+        var id=getRandomInt(3).toString();
 
         console.log("Id: "+id);
-        this.source = new EventSource("/stream/"+id);
+        var source = new EventSource("/stream/"+id);
+        var subscribed=document.getElementById("subscribed");
+        subscribed.innerHTML+="Subscribed to event ID: "+id+"<br/>";
+        setTimeout(function(){
+                console.log("Timeout!");
+                var id2=getRandomInt(3).toString();
 
-        this.source.addEventListener(id, function (event) {
+                console.log("Id: "+id2);
+                var source2 = new EventSource("/stream/"+id2);
+
+                subscribed.innerHTML+="Subscribed to event ID: "+id2+"<br/>";
+                        source2.addEventListener(id2, function (event) {
+
+                            // These events are JSON, so parsing and DOM fiddling are needed
+                            var comment = JSON.parse(event.data);
+                	        console.log(comment);
+                            var commentTable = document.getElementById("messages");
+                            commentTable.innerHTML+="<li>"+comment.id+" "+comment.name+"</li><br/>";
+
+
+                        });
+
+                        source2.onerror = function () {
+                            this.close();
+                        };
+
+        }, 10000);
+
+        source.addEventListener(id, function (event) {
 
             // These events are JSON, so parsing and DOM fiddling are needed
             var comment = JSON.parse(event.data);
 	        console.log(comment);
-/*        var commentTable = document.getElementById("messages");
-commentTable.innerHTML+=comment.name+"<br/>";*/
+            var commentTable = document.getElementById("messages");
+            commentTable.innerHTML+="<li>"+comment.id+" "+comment.name+"</li><br/>";
 
 
         });
 
-        this.source.onerror = function () {
+        source.onerror = function () {
             this.close();
         };
 
     };
 
     this.stop = function() {
-        this.source.close();
+        source.close();
     }
 
 }
