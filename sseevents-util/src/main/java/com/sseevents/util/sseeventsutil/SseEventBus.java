@@ -127,7 +127,6 @@ public class SseEventBus {
         this.clients.get(client.getId()).remove(client);
         System.out.println("Unregistering: "+client);
         System.out.println("client->emitter: "+this.clients.toString());
-//        System.out.println("Unregister: "+client.getId());
     }
 
     public void subscribe(Client client, String event) {
